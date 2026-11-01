@@ -3,7 +3,6 @@
 // reports reflect the seeded lifecycle.
 
 import type {
-  AuditEntry,
   Bill,
   BillLine,
   CashBookEntry,
@@ -159,7 +158,7 @@ export function buildSeedData(): RasData {
   const pushCash = (dayOffset: number, atIso: string, particulars: string, type: CashBookEntry["type"], mode: CashBookEntry["mode"], amount: number, refType?: CashBookEntry["refType"], refId?: string) => {
     const prev = cashBook.filter((e) => e.mode === "cash").pop();
     const balance = round2((prev?.balanceAfter ?? 0) + (mode === "cash" ? (type === "receipt" ? amount : -amount) : 0));
-    cashBook.push({
+    const entry: CashBookEntry = {
       id: `cb${++cashN}`,
       no: cashN,
       date: dateOnly(dayOffset),
@@ -169,9 +168,10 @@ export function buildSeedData(): RasData {
       mode,
       amount: round2(amount),
       balanceAfter: round2(balance),
-      refType,
-      refId,
-    });
+    };
+    if (refType) entry.refType = refType;
+    if (refId) entry.refId = refId;
+    cashBook.push(entry);
   };
 
   pushCash(-30, iso(-30, 9), "Opening cash balance", "receipt", "cash", 15000, "opening");
@@ -187,7 +187,8 @@ export function buildSeedData(): RasData {
       const m = menuItems.find((x) => x.id === mid)!;
       return { id: `oi${orderN}_${i}`, menuItemId: mid, name: m.name, unitPrice: m.price, quantity: qty };
     });
-    const order: Order = { id, code, tableId, items, status, placedAt, placedBy: "Priya Nair" };
+    const order: Order = { id, code, items, status, placedAt, placedBy: "Priya Nair" };
+    if (tableId) order.tableId = tableId;
     if (["preparing", "served", "billed", "paid"].includes(status)) order.acceptedAt = placedAt;
     if (["served", "billed", "paid"].includes(status)) order.startedAt = iso(dayOffset, hour, 10);
     if (["served", "billed", "paid"].includes(status)) order.servedAt = iso(dayOffset, hour + 1);
@@ -205,13 +206,17 @@ export function buildSeedData(): RasData {
       const billCode = `BILL-${String(billN).padStart(4, "0")}`;
       const paidAt = iso(dayOffset, hour + 2);
       const bill: Bill = {
-        id: billId, code: billCode, orderId: id, tableNumber: tableId ? tables.find((x) => x.id === tableId)!.number : undefined,
-        lines, subtotal, discountPct, discountState: discountPct > 0 ? "approved" : "none", discountRequestedBy: discountPct > 0 ? "Priya Nair" : undefined,
-        discountApprovedBy: discountPct > 0 ? "Amit Sharma" : undefined,
+        id: billId, code: billCode, orderId: id,
+        lines, subtotal, discountPct, discountState: discountPct > 0 ? "approved" : "none",
         discountAmount: t.discountAmount, gstPct: 5, gstAmount: t.gstAmount, grandTotal: t.grandTotal,
         status: "paid", payments: [{ id: `pay${++payN}`, mode: payMode ?? "cash", amount: t.grandTotal, at: paidAt }],
         createdAt: iso(dayOffset, hour + 1, 30), createdBy: "Priya Nair", paidAt,
       };
+      if (tableId) bill.tableNumber = tables.find((x) => x.id === tableId)!.number;
+      if (discountPct > 0) {
+        bill.discountRequestedBy = "Priya Nair";
+        bill.discountApprovedBy = "Amit Sharma";
+      }
       bills.push(bill);
       order.billedAt = iso(dayOffset, hour + 1, 30);
       pushCash(dayOffset, paidAt, `${billCode} — table sale`, "receipt", payMode === "cash" ? "cash" : "bank", t.grandTotal, "bill", billId);
@@ -233,7 +238,7 @@ export function buildSeedData(): RasData {
   for (let d = 6; d >= 1; d--) {
     const count = 2 + (d % 2);
     for (let k = 0; k < count; k++) {
-      const picks = combos[(d + k) % combos.length];
+      const picks = combos[(d + k) % combos.length]!;
       const mode = (["cash", "upi", "card", "upi"] as const)[(d + k) % 4];
       makeOrder(-d, 12 + k * 2, picks, undefined, "paid", mode, (d + k) % 5 === 0 ? 10 : 0);
     }
@@ -244,7 +249,7 @@ export function buildSeedData(): RasData {
   makeOrder(0, 11, [["m12", 2], ["m14", 1]], "t3", "served", null);
   makeOrder(0, 12, [["m1", 1], ["m5", 2], ["m16", 2]], "t5", "billed", null);
   makeOrder(0, 12, [["m7", 1], ["m11", 1]], undefined, "placed", null);
-  const billedToday = orders[orders.length - 2];
+  const billedToday = orders[orders.length - 2]!;
   // The billed order waits on a manager discount approval.
   const bl: BillLine[] = billedToday.items.map((i) => ({ menuItemId: i.menuItemId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, lineTotal: round2(i.quantity * i.unitPrice) }));
   const bSub = round2(bl.reduce((s, l) => s + l.lineTotal, 0));
@@ -255,7 +260,7 @@ export function buildSeedData(): RasData {
     discountAmount: 0, gstPct: 5, gstAmount: fullT.gstAmount, grandTotal: fullT.grandTotal,
     status: "unpaid", payments: [], createdAt: iso(0, 13, 10), createdBy: "Priya Nair",
   });
-  const cancelled = makeOrder(0, 10, [["m3", 1]], undefined, "cancelled", null);
+  makeOrder(0, 10, [["m3", 1]], undefined, "cancelled", null);
 
   // Table statuses based on live orders.
   const setOccupied = (tid: string, oid: string) => {
