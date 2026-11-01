@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { DiscountState, Invoice, Order, POStatus, StockStatus, TableStatus } from "@/lib/ras/types";
+import type { StockStatus } from "@/lib/ras/services";
+import type { DiscountState, Invoice, Order, POStatus, TableStatus } from "@/lib/ras/types";
 
 const ORDER_STYLES: Record<Order["status"], string> = {
   placed: "border-info/30 bg-info/10 text-info",
