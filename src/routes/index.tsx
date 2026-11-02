@@ -102,7 +102,18 @@ function Badge({ children }: { children: ReactNode }) {
   );
 }
 export default function App() {
-  const { data, ready, session, login, loginAsRole, logout, mutate, resetDemoData } = useRas();
+  const {
+    data,
+    ready,
+    databaseStatus,
+    databaseError,
+    session,
+    login,
+    loginAsRole,
+    logout,
+    mutate,
+    resetDemoData,
+  } = useRas();
   const navigate = useNavigate();
   const location = useLocation();
   const pathModule = location.pathname.slice(1) as ModuleId;
@@ -214,7 +225,14 @@ export default function App() {
     accounts: <Accounts {...common} />,
     reports: <Reports data={data} />,
     users: <UserManagement {...common} />,
-    settings: <SettingsPage {...common} reset={resetDemoData} />,
+    settings: (
+      <SettingsPage
+        {...common}
+        reset={resetDemoData}
+        databaseStatus={databaseStatus}
+        databaseError={databaseError}
+      />
+    ),
   };
   return (
     <div className="min-h-screen bg-background text-foreground md:flex">
@@ -254,7 +272,7 @@ export default function App() {
         <div
           className={`${mobileNav ? "block" : "hidden"} p-4 text-xs text-muted-foreground md:block`}
         >
-          Demo data is saved in this browser.
+          Restaurant data syncs through Supabase when connected.
         </div>
       </aside>
       <div className="min-w-0 flex-1">
@@ -302,6 +320,26 @@ export default function App() {
                 month: "short",
                 year: "numeric",
               })}
+            </span>
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                databaseStatus === "synced"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : databaseStatus === "saving" || databaseStatus === "connecting"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-rose-100 text-rose-800"
+              }`}
+              title={databaseError ?? "Shared restaurant data storage"}
+            >
+              {databaseStatus === "synced"
+                ? "Supabase synced"
+                : databaseStatus === "saving"
+                  ? "Saving…"
+                  : databaseStatus === "connecting"
+                    ? "Connecting…"
+                    : databaseStatus === "error"
+                      ? "Local fallback"
+                      : "Local data"}
             </span>
             <div className="relative">
               <button
@@ -3280,11 +3318,15 @@ function SettingsPage({
   data,
   mutate,
   reset,
+  databaseStatus,
+  databaseError,
 }: {
   data: RasData;
   mutate: Mutate;
   sessionId: string;
   reset: () => void;
+  databaseStatus: "connecting" | "synced" | "saving" | "local" | "error";
+  databaseError: string | null;
 }) {
   const [name, setName] = useState(data.settings.restaurantName),
     [address, setAddress] = useState(data.settings.restaurantAddress),
@@ -3295,6 +3337,24 @@ function SettingsPage({
   return (
     <>
       <PageHeader title="Settings" description="Demo business rules and restaurant identity." />
+      <div className={card}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold">Database connection</h2>
+            <p className="text-sm text-muted-foreground">
+              {databaseStatus === "synced"
+                ? "Restaurant data is synchronized with Supabase."
+                : databaseStatus === "saving"
+                  ? "Saving the latest changes to Supabase…"
+                  : databaseStatus === "connecting"
+                    ? "Connecting to Supabase…"
+                    : "Using the browser cache until Supabase is available."}
+            </p>
+            {databaseError && <p className="mt-1 text-xs text-destructive">{databaseError}</p>}
+          </div>
+          <Badge>{databaseStatus.replace("local", "local fallback")}</Badge>
+        </div>
+      </div>
       <div className={card}>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-sm">
@@ -3377,7 +3437,7 @@ function SettingsPage({
           <button
             className={secondary}
             onClick={() => {
-              if (confirm("Reset all local demo data? This cannot be undone.")) {
+              if (confirm("Reset all shared demo data? This cannot be undone.")) {
                 reset();
                 toast.success("Demo data restored");
               }

@@ -7,12 +7,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import type { RasData, Role, User } from "./types";
 import { buildSeedData } from "./seed";
 import { uid } from "./services";
+import { hasSupabaseDatabase, loadRasData, saveRasData } from "./repository";
 
 const DATA_KEY = "ras-data-v1";
 const SESSION_KEY = "ras-session-v1";
@@ -68,7 +70,7 @@ export function roleCan(role: Role, moduleId: ModuleId): boolean {
   return ROLE_MODULES[role].includes(moduleId);
 }
 
-function loadOrSeed(): RasData {
+function loadLocalOrSeed(): RasData {
   try {
     const raw = localStorage.getItem(DATA_KEY);
     if (raw) {
@@ -86,7 +88,9 @@ function loadOrSeed(): RasData {
 interface RasContextValue {
   data: RasData;
   ready: boolean;
-  /** Apply a mutation to the shared dataset; persists to localStorage. */
+  databaseStatus: "connecting" | "synced" | "saving" | "local" | "error";
+  databaseError: string | null;
+  /** Apply a mutation to the shared dataset; persists locally and to Supabase when connected. */
   mutate: (fn: (draft: RasData) => void) => void;
   session: User | null;
   login: (userId: string, password: string) => { ok: boolean; error?: string };
@@ -101,26 +105,122 @@ export function RasProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<RasData | null>(null);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [databaseStatus, setDatabaseStatus] = useState<RasContextValue["databaseStatus"]>(
+    hasSupabaseDatabase() ? "connecting" : "local",
+  );
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
+  const remoteEnabledRef = useRef(false);
+  const pendingRemoteRef = useRef<RasData | null>(null);
+  const savingRemoteRef = useRef(false);
+  const lastRemoteRevisionRef = useRef(0);
 
-  useEffect(() => {
-    const loaded = loadOrSeed();
-    setData(loaded);
-    try {
-      const uid = localStorage.getItem(SESSION_KEY);
-      if (uid && loaded.users.some((u) => u.userId === uid && u.active)) setSessionUserId(uid);
-    } catch {
-      // ignore
-    }
-    setReady(true);
-  }, []);
-
-  const persist = useCallback((next: RasData) => {
+  const writeLocal = useCallback((next: RasData) => {
     try {
       localStorage.setItem(DATA_KEY, JSON.stringify(next));
     } catch {
-      // storage full — keep state in memory
+      // Keep the in-memory state when browser storage is unavailable or full.
     }
   }, []);
+
+  const flushRemote = useCallback(async () => {
+    if (savingRemoteRef.current || !remoteEnabledRef.current) return;
+    savingRemoteRef.current = true;
+    try {
+      while (pendingRemoteRef.current) {
+        const snapshot = pendingRemoteRef.current;
+        pendingRemoteRef.current = null;
+        setDatabaseStatus("saving");
+        lastRemoteRevisionRef.current = await saveRasData(snapshot);
+      }
+      setDatabaseError(null);
+      setDatabaseStatus("synced");
+    } catch (error) {
+      setDatabaseError(error instanceof Error ? error.message : "Supabase save failed");
+      setDatabaseStatus("error");
+    } finally {
+      savingRemoteRef.current = false;
+      if (pendingRemoteRef.current && remoteEnabledRef.current) void flushRemote();
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const refreshFromRemote = async () => {
+      try {
+        const snapshot = await loadRasData();
+        if (!active || !snapshot || snapshot.revision <= lastRemoteRevisionRef.current) return;
+        lastRemoteRevisionRef.current = snapshot.revision;
+        writeLocal(snapshot.data);
+        setData(snapshot.data);
+        setDatabaseError(null);
+        setDatabaseStatus((current) => (current === "saving" ? current : "synced"));
+      } catch (error) {
+        if (!active) return;
+        setDatabaseError(error instanceof Error ? error.message : "Supabase refresh failed");
+        setDatabaseStatus("error");
+      }
+    };
+
+    const start = async () => {
+      const local = loadLocalOrSeed();
+      let loaded = local;
+
+      if (hasSupabaseDatabase()) {
+        setDatabaseStatus("connecting");
+        try {
+          const remote = await loadRasData();
+          if (remote) {
+            loaded = remote.data;
+            lastRemoteRevisionRef.current = remote.revision;
+          } else {
+            lastRemoteRevisionRef.current = await saveRasData(local);
+          }
+          remoteEnabledRef.current = true;
+          setDatabaseError(null);
+          setDatabaseStatus("synced");
+          pollTimer = setInterval(() => void refreshFromRemote(), 5_000);
+        } catch (error) {
+          remoteEnabledRef.current = false;
+          setDatabaseError(error instanceof Error ? error.message : "Supabase connection failed");
+          setDatabaseStatus("error");
+        }
+      } else {
+        setDatabaseStatus("local");
+      }
+
+      if (!active) return;
+      writeLocal(loaded);
+      setData(loaded);
+      try {
+        const sessionId = localStorage.getItem(SESSION_KEY);
+        if (sessionId && loaded.users.some((user) => user.userId === sessionId && user.active))
+          setSessionUserId(sessionId);
+      } catch {
+        // Ignore unavailable browser session storage.
+      }
+      setReady(true);
+    };
+
+    void start();
+    return () => {
+      active = false;
+      remoteEnabledRef.current = false;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [writeLocal]);
+
+  const persist = useCallback(
+    (next: RasData) => {
+      writeLocal(next);
+      if (remoteEnabledRef.current) {
+        pendingRemoteRef.current = structuredClone(next);
+        void flushRemote();
+      }
+    },
+    [flushRemote, writeLocal],
+  );
 
   const mutate = useCallback(
     (fn: (draft: RasData) => void) => {
@@ -194,9 +294,9 @@ export function RasProvider({ children }: { children: ReactNode }) {
 
   const resetDemoData = useCallback(() => {
     const seeded = buildSeedData();
-    localStorage.setItem(DATA_KEY, JSON.stringify(seeded));
+    persist(seeded);
     setData(seeded);
-  }, []);
+  }, [persist]);
 
   const session = useMemo(
     () =>
@@ -210,6 +310,8 @@ export function RasProvider({ children }: { children: ReactNode }) {
     () => ({
       data: data ?? buildEmptyData(),
       ready,
+      databaseStatus,
+      databaseError,
       mutate,
       session,
       login,
@@ -217,7 +319,18 @@ export function RasProvider({ children }: { children: ReactNode }) {
       logout,
       resetDemoData,
     }),
-    [data, ready, mutate, session, login, loginAsRole, logout, resetDemoData],
+    [
+      data,
+      ready,
+      databaseStatus,
+      databaseError,
+      mutate,
+      session,
+      login,
+      loginAsRole,
+      logout,
+      resetDemoData,
+    ],
   );
 
   return <RasContext.Provider value={value}>{children}</RasContext.Provider>;
