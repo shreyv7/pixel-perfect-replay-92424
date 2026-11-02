@@ -321,26 +321,6 @@ export default function App() {
                 year: "numeric",
               })}
             </span>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                databaseStatus === "synced"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : databaseStatus === "saving" || databaseStatus === "connecting"
-                    ? "bg-amber-100 text-amber-800"
-                    : "bg-rose-100 text-rose-800"
-              }`}
-              title={databaseError ?? "Shared restaurant data storage"}
-            >
-              {databaseStatus === "synced"
-                ? "Supabase synced"
-                : databaseStatus === "saving"
-                  ? "Saving…"
-                  : databaseStatus === "connecting"
-                    ? "Connecting…"
-                    : databaseStatus === "error"
-                      ? "Local fallback"
-                      : "Local data"}
-            </span>
             <div className="relative">
               <button
                 className={secondary}

@@ -23,7 +23,7 @@ Apply [the database migration](supabase/migrations/20261102000000_create_ras_sta
 npx supabase db push
 ```
 
-The migration creates the `ras_state` JSONB record, Row Level Security policies for this shared academic demo and revision tracking. The app saves every mutation to Supabase and checks for changes from other browser sessions every five seconds. After the first successful connection, the header displays `Supabase synced`. If the table is unavailable, the app displays `Local fallback` and continues using its browser cache.
+The migration creates the `ras_state` JSONB record, Row Level Security policies for this shared academic demo and revision tracking. The app saves every mutation to Supabase and checks for changes from other browser sessions every five seconds. The manager Settings page shows the database connection status. If the table is unavailable, the app continues using its browser cache.
 
 ## Demo sign in
 
