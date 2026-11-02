@@ -86,7 +86,7 @@ export interface Reservation {
   createdBy: string;
 }
 
-export type OrderStatus = "placed" | "preparing" | "served" | "billed" | "paid" | "cancelled";
+export type OrderStatus = "placed" | "preparing" | "ready" | "served" | "billed" | "paid" | "cancelled";
 
 export interface OrderItem {
   id: string;
@@ -106,10 +106,12 @@ export interface Order {
   placedBy: string;
   acceptedAt?: string;
   startedAt?: string;
+  readyAt?: string;
   servedAt?: string;
   billedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
+  ingredientsDeducted?: boolean;
 }
 
 export type PaymentMode = "cash" | "upi" | "card";
@@ -353,6 +355,7 @@ export interface RasData {
 export const STATUS_LABELS: Record<OrderStatus, string> = {
   placed: "Placed",
   preparing: "Preparing",
+  ready: "Ready to serve",
   served: "Served",
   billed: "Billed",
   paid: "Paid",

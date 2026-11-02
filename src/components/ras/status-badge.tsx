@@ -6,6 +6,7 @@ import type { DiscountState, Invoice, Order, POStatus, TableStatus } from "@/lib
 const ORDER_STYLES: Record<Order["status"], string> = {
   placed: "border-info/30 bg-info/10 text-info",
   preparing: "border-warning/40 bg-warning/15 text-warning",
+  ready: "border-primary/40 bg-primary/15 text-primary",
   served: "border-primary/30 bg-accent text-accent-foreground",
   billed: "border-info/30 bg-info/10 text-info",
   paid: "border-success/30 bg-success/10 text-success",
@@ -19,14 +20,15 @@ export function OrderStatusBadge({
   status: Order["status"];
   className?: string;
 }) {
-  const label = {
+  const label: Record<Order["status"], string> = {
     placed: "Placed",
     preparing: "Preparing",
+    ready: "Ready to serve",
     served: "Served",
     billed: "Billed",
     paid: "Paid",
     cancelled: "Cancelled",
-  }[status];
+  };
   return (
     <Badge
       variant="outline"

@@ -159,11 +159,84 @@ export function groupReorderBySupplier(data: RasData, lines: ReorderLine[]): Reo
 
 // ---------- Orders / kitchen ----------
 
-export const KITCHEN_ACTIVE_STATUSES: Order["status"][] = ["placed", "preparing"];
-export const ORDER_ACTIVE_STATUSES: Order["status"][] = ["placed", "preparing", "served", "billed"];
+export const KITCHEN_ACTIVE_STATUSES: Order["status"][] = ["placed", "preparing", "ready"];
+export const ORDER_ACTIVE_STATUSES: Order["status"][] = ["placed", "preparing", "ready", "served", "billed"];
 
 export function orderTotal(order: Order): number {
   return round2(order.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0));
+}
+
+/** Deduct recipe ingredients for all items in an order when food is prepared. */
+export function deductOrderIngredients(
+  d: RasData,
+  order: Order,
+  actorId?: string,
+): { deducted: { ingredientName: string; quantity: number; unit: string }[] } {
+  if (order.ingredientsDeducted) {
+    return { deducted: [] };
+  }
+
+  const at = new Date().toISOString();
+  const today = at.slice(0, 10);
+  const deducted: { ingredientName: string; quantity: number; unit: string }[] = [];
+
+  const needed = new Map<string, number>();
+
+  for (const item of order.items) {
+    const menuItem = d.menuItems.find((m) => m.id === item.menuItemId);
+    if (!menuItem || !menuItem.recipe || menuItem.recipe.length === 0) continue;
+
+    for (const r of menuItem.recipe) {
+      const prev = needed.get(r.ingredientId) || 0;
+      needed.set(r.ingredientId, round2(prev + r.quantity * item.quantity));
+    }
+  }
+
+  for (const [ingredientId, qty] of needed.entries()) {
+    const ing = d.ingredients.find((i) => i.id === ingredientId);
+    if (!ing) continue;
+
+    ing.currentStock = Math.max(0, round2(ing.currentStock - qty));
+
+    d.consumptionLogs.push({
+      id: uid("consumption"),
+      ingredientId: ing.id,
+      quantity: qty,
+      source: "order",
+      date: today,
+      at,
+    });
+
+    deducted.push({
+      ingredientName: ing.name,
+      quantity: qty,
+      unit: ing.unit,
+    });
+
+    if (d.settings.lowStockAlerts && ing.currentStock < ing.threshold) {
+      d.notifications.unshift({
+        id: uid("notif"),
+        type: "low_stock",
+        title: `Low stock alert: ${ing.name}`,
+        message: `${ing.name} is down to ${ing.currentStock} ${ing.unit} (threshold: ${ing.threshold} ${ing.unit}).`,
+        at,
+        read: false,
+      });
+    }
+  }
+
+  if (deducted.length > 0) {
+    d.auditLog.unshift({
+      id: uid("audit"),
+      at,
+      actor: actorId || "kitchen",
+      action: "ingredient_consumed",
+      details: `${order.code} prepared: ${deducted.map((x) => `${x.quantity} ${x.unit} of ${x.ingredientName}`).join(", ")}`,
+    });
+  }
+
+  order.ingredientsDeducted = true;
+  return { deducted };
 }
 
 // ---------- Accounts / cash book ----------

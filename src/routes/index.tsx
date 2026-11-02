@@ -33,7 +33,7 @@ import {
   Menu as MenuIcon,
 } from "lucide-react";
 import { useRas, ALL_MODULES, ROLE_MODULES, ROLE_HOME, type ModuleId } from "@/lib/ras/store";
-import { ROLE_LABELS, type MenuItem, type PaymentMode, type RasData } from "@/lib/ras/types";
+import { ROLE_LABELS, STATUS_LABELS, type MenuItem, type PaymentMode, type RasData } from "@/lib/ras/types";
 import {
   computeBillTotals,
   computeThreshold,
@@ -44,8 +44,10 @@ import {
   round2,
   uid,
   stockStatus,
+  deductOrderIngredients,
 } from "@/lib/ras/services";
-import { money, fmtDateTime, todayStr, dateStr } from "@/lib/ras/format";
+import { money, fmtDateTime, fmtTime, todayStr, dateStr } from "@/lib/ras/format";
+import { cn } from "@/lib/utils";
 import {
   PageHeader,
   KpiCard,
@@ -214,10 +216,10 @@ export default function App() {
   const screens: Record<ModuleId, ReactNode> = {
     overview: <Overview data={data} nav={nav} />,
     orders: <Orders {...common} search={search} manager={session.role === "manager"} />,
-    tables: <Tables {...common} />,
+    tables: <Tables {...common} search={search} />,
     menu: <Menu {...common} search={search} />,
     billing: <Billing {...common} manager={session.role === "manager"} />,
-    kitchen: <Kitchen {...common} />,
+    kitchen: <Kitchen {...common} search={search} />,
     inventory: <Inventory {...common} search={search} canManage={session.role !== "kitchen"} />,
     "purchase-orders": <PurchaseOrders {...common} />,
     suppliers: <Suppliers {...common} />,
@@ -269,11 +271,6 @@ export default function App() {
             );
           })}
         </nav>
-        <div
-          className={`${mobileNav ? "block" : "hidden"} p-4 text-xs text-muted-foreground md:block`}
-        >
-          Restaurant data syncs through Supabase when connected.
-        </div>
       </aside>
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/95 px-6 py-4 backdrop-blur">
@@ -641,7 +638,7 @@ function Orders({
     >([]);
   const startEdit = (orderId: string) => {
     const order = data.orders.find((o) => o.id === orderId);
-    if (!order || !["placed", "preparing", "served"].includes(order.status)) return;
+    if (!order || !["placed", "preparing", "ready", "served"].includes(order.status)) return;
     setEditing(orderId);
     setTable(order.tableId ?? "");
     setLines(
@@ -882,10 +879,10 @@ function Orders({
                     <td>{o.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}</td>
                     <td>{money(orderTotal(o))}</td>
                     <td>
-                      <Badge>{o.status}</Badge>
+                      <Badge>{STATUS_LABELS[o.status] ?? o.status}</Badge>
                     </td>
                     <td>
-                      {["placed", "preparing", "served"].includes(o.status) && (
+                      {["placed", "preparing", "ready", "served"].includes(o.status) && (
                         <button className={secondary} onClick={() => startEdit(o.id)}>
                           Edit
                         </button>
@@ -947,7 +944,18 @@ function Orders({
     </>
   );
 }
-function Tables({ data, mutate, sessionId }: { data: RasData; mutate: Mutate; sessionId: string }) {
+function Tables({
+  data,
+  mutate,
+  sessionId,
+  search = "",
+}: {
+  data: RasData;
+  mutate: Mutate;
+  sessionId: string;
+  search?: string;
+}) {
+  const [statusFilter, setStatusFilter] = useState<"all" | "free" | "reserved" | "occupied">("all");
   const [selected, setSelected] = useState(""),
     [name, setName] = useState(""),
     [phone, setPhone] = useState(""),
@@ -961,8 +969,7 @@ function Tables({ data, mutate, sessionId }: { data: RasData; mutate: Mutate; se
       !/^\d{10}$/.test(phone) ||
       !when ||
       party < 1 ||
-      party > t.capacity ||
-      t.status === "occupied"
+      party > t.capacity
     )
       return toast.error("Check table, name, 10-digit phone, time and party size");
     const time = new Date(when).getTime();
@@ -987,46 +994,130 @@ function Tables({ data, mutate, sessionId }: { data: RasData; mutate: Mutate; se
         status: "upcoming",
         createdBy: sessionId,
       });
-      d.tables.find((t) => t.id === selected)!.status = "reserved";
+      const table = d.tables.find((t) => t.id === selected)!;
+      if (table.status === "free") {
+        table.status = "reserved";
+      }
     });
     setSelected("");
     setName("");
     toast.success("Reservation saved");
   };
+
+  const filteredTables = data.tables.filter((t) => {
+    if (statusFilter !== "all" && t.status !== statusFilter) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    const matchesNumber = `table ${t.number}`.includes(q) || String(t.number).includes(q);
+    const reservations = data.reservations.filter(
+      (r) => r.tableId === t.id && r.status === "upcoming",
+    );
+    const matchesReservation = reservations.some(
+      (r) => r.customerName.toLowerCase().includes(q) || r.phone.includes(q),
+    );
+    return matchesNumber || matchesReservation;
+  });
+
   return (
     <>
       <PageHeader
         title="Tables & reservations"
         description="Track seating and prevent conflicting reservations."
-      />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {data.tables.map((t) => (
-          <div key={t.id} className={card}>
-            <div className="flex justify-between">
-              <b>Table {t.number}</b>
-              <Badge>{t.status}</Badge>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">{t.capacity} seats</p>
-            <p className="mt-2 text-xs">
-              {data.reservations
-                .filter((r) => r.tableId === t.id && r.status === "upcoming")
-                .map((r) => `${r.customerName} · ${fmtDateTime(r.dateTime)}`)
-                .join(", ")}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {t.status !== "occupied" && (
-                <button className={secondary} onClick={() => setSelected(t.id)}>
-                  Reserve
+        actions={
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card p-1">
+            {(
+              [
+                { id: "all", label: "All" },
+                { id: "free", label: "Free" },
+                { id: "reserved", label: "Reserved" },
+                { id: "occupied", label: "Occupied" },
+              ] as const
+            ).map((tab) => {
+              const count =
+                tab.id === "all"
+                  ? data.tables.length
+                  : data.tables.filter((t) => t.status === tab.id).length;
+              const active = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px]",
+                      active
+                        ? "bg-primary-foreground/20 text-primary-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {count}
+                  </span>
                 </button>
-              )}
-              {t.status !== "occupied" && (
+              );
+            })}
+          </div>
+        }
+      />
+      {filteredTables.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">
+            No {statusFilter === "all" ? "" : statusFilter} tables
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {statusFilter !== "all"
+              ? `There are currently no tables marked as "${statusFilter}".`
+              : "No tables match your search query."}
+          </p>
+          {statusFilter !== "all" && (
+            <button className={`${secondary} mt-4`} onClick={() => setStatusFilter("all")}>
+              Show all tables
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {filteredTables.map((t) => (
+            <div key={t.id} className={card}>
+              <div className="flex justify-between">
+                <b>Table {t.number}</b>
+                <Badge>{t.status}</Badge>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">{t.capacity} seats</p>
+              <p className="mt-2 text-xs">
+                {data.reservations
+                  .filter((r) => r.tableId === t.id && r.status === "upcoming")
+                  .map((r) => `${r.customerName} · ${fmtDateTime(r.dateTime)}`)
+                  .join(", ")}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {t.status !== "reserved" && (
+                  <button className={secondary} onClick={() => setSelected(t.id)}>
+                    Reserve
+                  </button>
+                )}
                 <button
                   className={secondary}
                   onClick={() => {
+                    if (
+                      t.status === "occupied" &&
+                      !confirm(
+                        `Table ${t.number} is currently occupied. Re-seat or assign a new party?`,
+                      )
+                    )
+                      return;
                     if (t.status === "reserved" && !confirm("Seat this table's reservation now?"))
                       return;
                     mutate((d) => {
-                      d.tables.find((x) => x.id === t.id)!.status = "occupied";
+                      const target = d.tables.find((x) => x.id === t.id)!;
+                      target.status = "occupied";
                       if (t.status === "reserved") {
                         const reservation = d.reservations.find(
                           (r) => r.tableId === t.id && r.status === "upcoming",
@@ -1034,37 +1125,46 @@ function Tables({ data, mutate, sessionId }: { data: RasData; mutate: Mutate; se
                         if (reservation) reservation.status = "completed";
                       }
                     });
-                    toast.success("Table marked occupied");
+                    toast.success(`Table ${t.number} marked occupied`);
                   }}
                 >
                   Occupy
                 </button>
-              )}
-              {t.status !== "free" && !t.orderId && (
-                <button
-                  className={secondary}
-                  onClick={() => {
-                    if (
-                      t.status === "reserved" &&
-                      !confirm("Free this table and cancel its upcoming reservations?")
-                    )
-                      return;
-                    mutate((d) => {
-                      d.tables.find((x) => x.id === t.id)!.status = "free";
-                      d.reservations
-                        .filter((r) => r.tableId === t.id && r.status === "upcoming")
-                        .forEach((r) => (r.status = "cancelled"));
-                    });
-                    toast.success("Table freed");
-                  }}
-                >
-                  Free
-                </button>
-              )}
+                {t.status !== "free" && (
+                  <button
+                    className={secondary}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          `Free Table ${t.number}${
+                            t.status === "reserved"
+                              ? " and cancel its upcoming reservation?"
+                              : t.orderId
+                                ? " and clear table order?"
+                                : "?"
+                          }`,
+                        )
+                      )
+                        return;
+                      mutate((d) => {
+                        const target = d.tables.find((x) => x.id === t.id)!;
+                        target.status = "free";
+                        delete target.orderId;
+                        d.reservations
+                          .filter((r) => r.tableId === t.id && r.status === "upcoming")
+                          .forEach((r) => (r.status = "cancelled"));
+                      });
+                      toast.success(`Table ${t.number} freed`);
+                    }}
+                  >
+                    Free
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       {selected && (
         <div className={card}>
           <h2 className="mb-3 font-semibold">
@@ -1097,71 +1197,405 @@ function Tables({ data, mutate, sessionId }: { data: RasData; mutate: Mutate; se
               onChange={(e) => setParty(Number(e.target.value))}
             />
           </div>
-          <button className={`${primary} mt-3`} onClick={reserve}>
-            Save reservation
-          </button>
+          <div className="mt-3 flex gap-2">
+            <button className={primary} onClick={reserve}>
+              Save reservation
+            </button>
+            <button className={secondary} onClick={() => setSelected("")}>
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </>
   );
 }
-function Kitchen({ data, mutate }: { data: RasData; mutate: Mutate; sessionId: string }) {
+function Kitchen({
+  data,
+  mutate,
+  search = "",
+}: {
+  data: RasData;
+  mutate: Mutate;
+  sessionId: string;
+  search?: string;
+}) {
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "placed" | "preparing" | "ready" | "served"
+  >("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "dine-in" | "takeaway">("all");
+  const [tableFilter, setTableFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"oldest" | "newest">("oldest");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const activePlaced = data.orders.filter((o) => o.status === "placed").length;
+  const activePreparing = data.orders.filter((o) => o.status === "preparing").length;
+  const activeReady = data.orders.filter((o) => o.status === "ready").length;
+  const activeTotal = activePlaced + activePreparing + activeReady;
+  const servedToday = data.orders.filter(
+    (o) => o.status === "served" && (!o.servedAt || dateStr(o.servedAt) === todayStr()),
+  ).length;
+
+  const statusTabs = [
+    { id: "all", label: "All active", count: activeTotal },
+    { id: "placed", label: "Placed", count: activePlaced },
+    { id: "preparing", label: "Preparing", count: activePreparing },
+    { id: "ready", label: "Ready to serve", count: activeReady },
+    { id: "served", label: "Served (Today)", count: servedToday },
+  ] as const;
+
+  const sortedTables = [...data.tables].sort((a, b) => a.number - b.number);
+
+  const filteredOrders = data.orders
+    .filter((o) => {
+      // 1. Status filter
+      if (statusFilter === "all") {
+        if (!["placed", "preparing", "ready"].includes(o.status)) return false;
+      } else if (statusFilter === "served") {
+        if (o.status !== "served") return false;
+        if (o.servedAt && dateStr(o.servedAt) !== todayStr()) return false;
+      } else {
+        if (o.status !== statusFilter) return false;
+      }
+
+      // 2. Order type filter
+      if (typeFilter === "dine-in" && !o.tableId) return false;
+      if (typeFilter === "takeaway" && o.tableId) return false;
+
+      // 3. Table filter
+      if (tableFilter === "takeaway" && o.tableId) return false;
+      if (tableFilter !== "all" && tableFilter !== "takeaway" && o.tableId !== tableFilter)
+        return false;
+
+      // 4. Search query (local search bar + top global search prop)
+      const q = (searchQuery || search).trim().toLowerCase();
+      if (q) {
+        const matchCode = o.code.toLowerCase().includes(q);
+        const tableObj = data.tables.find((t) => t.id === o.tableId);
+        const matchTable =
+          (tableObj && `table ${tableObj.number}`.toLowerCase().includes(q)) ||
+          (!o.tableId && "takeaway".includes(q));
+        const matchItems = o.items.some((i) => i.name.toLowerCase().includes(q));
+        if (!matchCode && !matchTable && !matchItems) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      const timeA = new Date(a.placedAt).getTime();
+      const timeB = new Date(b.placedAt).getTime();
+      return sortBy === "oldest" ? timeA - timeB : timeB - timeA;
+    });
+
+  const hasActiveFilters =
+    statusFilter !== "all" ||
+    typeFilter !== "all" ||
+    tableFilter !== "all" ||
+    searchQuery !== "" ||
+    sortBy !== "oldest";
+
+  const resetFilters = () => {
+    setStatusFilter("all");
+    setTypeFilter("all");
+    setTableFilter("all");
+    setSearchQuery("");
+    setSortBy("oldest");
+  };
+
   return (
     <>
       <PageHeader
         title="Kitchen display"
-        description="Move active tickets from placed to served."
+        description="Move active tickets from placed to ready and served."
+        actions={
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card p-1">
+            {statusTabs.map((tab) => {
+              const active = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px]",
+                      active
+                        ? "bg-primary-foreground/20 text-primary-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        }
       />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {data.orders
-          .filter((o) => ["placed", "preparing"].includes(o.status))
-          .map((o) => (
-            <div key={o.id} className={card}>
-              <div className="flex justify-between">
-                <b>{o.code}</b>
-                <Badge>{o.status}</Badge>
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Table {data.tables.find((t) => t.id === o.tableId)?.number ?? "Takeaway"} ·{" "}
-                {fmtDateTime(o.placedAt)}
-              </p>
-              <div className="my-4 space-y-1">
-                {o.items.map((i) => (
-                  <p key={i.id} className="text-sm">
-                    {i.quantity} × {i.name}
-                  </p>
-                ))}
-              </div>
-              <button
-                className={primary}
-                onClick={() => {
-                  mutate((d) => {
-                    const x = d.orders.find((x) => x.id === o.id)!;
-                    if (x.status === "placed" && !x.acceptedAt) {
-                      x.acceptedAt = new Date().toISOString();
-                    } else if (x.status === "placed") {
-                      x.status = "preparing";
-                      x.startedAt = new Date().toISOString();
-                    } else if (x.status === "preparing") {
-                      x.status = "served";
-                      x.servedAt = new Date().toISOString();
-                    }
-                  });
-                  toast.success("Kitchen status updated");
-                }}
-              >
-                {o.status === "placed"
-                  ? o.acceptedAt
-                    ? "Start preparing"
-                    : "Accept order"
-                  : "Mark served"}
-              </button>
-            </div>
-          ))}
-        {!data.orders.some((o) => ["placed", "preparing"].includes(o.status)) && (
-          <p>No active kitchen tickets.</p>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative min-w-[180px] flex-1 max-w-sm">
+            <input
+              className={field}
+              placeholder="Search items, order code, table..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <select
+            className={field + " w-auto min-w-[140px]"}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as "all" | "dine-in" | "takeaway")}
+          >
+            <option value="all">All order types</option>
+            <option value="dine-in">Dine-in only</option>
+            <option value="takeaway">Takeaway only</option>
+          </select>
+          <select
+            className={field + " w-auto min-w-[130px]"}
+            value={tableFilter}
+            onChange={(e) => setTableFilter(e.target.value)}
+          >
+            <option value="all">All tables</option>
+            {sortedTables.map((t) => (
+              <option key={t.id} value={t.id}>
+                Table {t.number} ({t.capacity} seats)
+              </option>
+            ))}
+            <option value="takeaway">Takeaway only</option>
+          </select>
+          <select
+            className={field + " w-auto min-w-[150px]"}
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "oldest" | "newest")}
+          >
+            <option value="oldest">Oldest first (FIFO)</option>
+            <option value="newest">Newest first</option>
+          </select>
+        </div>
+        {hasActiveFilters && (
+          <button className={`${secondary} text-xs py-2 px-3`} onClick={resetFilters}>
+            Reset filters
+          </button>
         )}
       </div>
+
+      {filteredOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">
+            {statusFilter === "all"
+              ? "No active kitchen tickets"
+              : `No tickets in "${statusFilter === "ready" ? "Ready to serve" : statusFilter === "served" ? "Served" : statusFilter}"`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {hasActiveFilters
+              ? "No tickets match your current filter and search criteria."
+              : "New placed orders will appear here automatically."}
+          </p>
+          {hasActiveFilters && (
+            <button className={`${secondary} mt-4`} onClick={resetFilters}>
+              Clear all filters
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredOrders.map((o) => (
+            <div key={o.id} className={card}>
+              <div className="flex justify-between items-start">
+                <div>
+                  <b className="text-base">{o.code}</b>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {o.tableId
+                      ? `Table ${data.tables.find((t) => t.id === o.tableId)?.number ?? "—"}`
+                      : "Takeaway"}{" "}
+                    · Placed {fmtTime(o.placedAt)}
+                  </p>
+                </div>
+                <Badge>{STATUS_LABELS[o.status] ?? o.status}</Badge>
+              </div>
+
+              {o.ingredientsDeducted && (
+                <p className="mt-2 text-xs font-medium text-primary">
+                  ✓ Ingredients deducted from inventory
+                </p>
+              )}
+              {o.readyAt && o.status === "ready" && (
+                <p className="mt-1 text-xs font-medium text-foreground">
+                  Ready since {fmtTime(o.readyAt)}
+                </p>
+              )}
+              {o.servedAt && o.status === "served" && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Served at {fmtTime(o.servedAt)}
+                </p>
+              )}
+
+              <div className="my-4 space-y-1 rounded-lg bg-muted/30 p-2.5">
+                {o.items.map((i) => (
+                  <div key={i.id} className="flex justify-between text-sm">
+                    <span className="font-medium text-foreground">{i.name}</span>
+                    <span className="font-semibold text-primary">×{i.quantity}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {o.status === "placed" && !o.acceptedAt && (
+                  <button
+                    className={primary}
+                    onClick={() => {
+                      mutate((d) => {
+                        const x = d.orders.find((x) => x.id === o.id)!;
+                        x.acceptedAt = new Date().toISOString();
+                      });
+                      toast.success("Order accepted");
+                    }}
+                  >
+                    Accept order
+                  </button>
+                )}
+                {o.status === "placed" && o.acceptedAt && (
+                  <>
+                    <button
+                      className={primary}
+                      onClick={() => {
+                        let result: ReturnType<typeof deductOrderIngredients>;
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "preparing";
+                          x.startedAt = new Date().toISOString();
+                          result = deductOrderIngredients(d, x, sessionId);
+                        });
+                        const count = result?.deducted?.length || 0;
+                        toast.success(
+                          count > 0
+                            ? `Preparation started & ${count} ingredient${count > 1 ? "s" : ""} reduced from stock`
+                            : "Preparation started",
+                        );
+                      }}
+                    >
+                      Start preparing
+                    </button>
+                    <button
+                      className={secondary}
+                      onClick={() => {
+                        let result: ReturnType<typeof deductOrderIngredients>;
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "ready";
+                          x.readyAt = new Date().toISOString();
+                          result = deductOrderIngredients(d, x, sessionId);
+                        });
+                        const count = result?.deducted?.length || 0;
+                        toast.success(
+                          count > 0
+                            ? `Order marked ready & ${count} ingredient${count > 1 ? "s" : ""} reduced from stock`
+                            : "Order marked ready to serve",
+                        );
+                      }}
+                    >
+                      Ready to serve
+                    </button>
+                  </>
+                )}
+                {o.status === "preparing" && (
+                  <>
+                    <button
+                      className={primary}
+                      onClick={() => {
+                        let result: ReturnType<typeof deductOrderIngredients>;
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "ready";
+                          x.readyAt = new Date().toISOString();
+                          result = deductOrderIngredients(d, x, sessionId);
+                        });
+                        const count = result?.deducted?.length || 0;
+                        toast.success(
+                          count > 0
+                            ? `Order marked ready & ${count} ingredient${count > 1 ? "s" : ""} reduced from stock`
+                            : "Order marked ready to serve",
+                        );
+                      }}
+                    >
+                      Ready to serve
+                    </button>
+                    <button
+                      className={secondary}
+                      onClick={() => {
+                        let result: ReturnType<typeof deductOrderIngredients>;
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "served";
+                          x.servedAt = new Date().toISOString();
+                          result = deductOrderIngredients(d, x, sessionId);
+                        });
+                        toast.success("Order marked served");
+                      }}
+                    >
+                      Mark served
+                    </button>
+                  </>
+                )}
+                {o.status === "ready" && (
+                  <>
+                    <button
+                      className={primary}
+                      onClick={() => {
+                        let result: ReturnType<typeof deductOrderIngredients>;
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "served";
+                          x.servedAt = new Date().toISOString();
+                          result = deductOrderIngredients(d, x, sessionId);
+                        });
+                        toast.success("Order marked served");
+                      }}
+                    >
+                      Mark served
+                    </button>
+                    <button
+                      className={secondary}
+                      onClick={() => {
+                        mutate((d) => {
+                          const x = d.orders.find((x) => x.id === o.id)!;
+                          x.status = "preparing";
+                        });
+                        toast.success("Returned to preparing");
+                      }}
+                    >
+                      Back to preparing
+                    </button>
+                  </>
+                )}
+                {o.status === "served" && (
+                  <button
+                    className={secondary}
+                    onClick={() => {
+                      mutate((d) => {
+                        const x = d.orders.find((x) => x.id === o.id)!;
+                        x.status = "ready";
+                      });
+                      toast.success("Order returned to ready to serve");
+                    }}
+                  >
+                    Return to Ready
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -2088,6 +2522,16 @@ function Inventory({
               sign: "-",
               kind: `Wastage: ${x.reason}`,
             })),
+            ...data.consumptionLogs
+              .filter((c) => c.source === "order")
+              .map((c) => ({
+                id: c.id,
+                at: c.at,
+                ingredientId: c.ingredientId,
+                quantity: c.quantity,
+                sign: "-",
+                kind: "Prepared in kitchen",
+              })),
             ...data.invoices.flatMap((invoice) =>
               invoice.lines.map((line) => ({
                 id: `${invoice.id}-${line.ingredientId}`,
