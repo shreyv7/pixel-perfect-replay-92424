@@ -25,7 +25,11 @@ export function fmtDateTime(iso: string): string {
 }
 
 export function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 export function fmtDate(d: string | Date): string {
@@ -34,11 +38,13 @@ export function fmtDate(d: string | Date): string {
 }
 
 export function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 export function dateStr(iso: string): string {
-  return iso.slice(0, 10);
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 export function dayLabel(d: string): string {

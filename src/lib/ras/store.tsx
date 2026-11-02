@@ -1,27 +1,59 @@
 // Client-side application store: localStorage persistence, simulated auth,
 // role permissions and a central mutate() that all modules share.
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { RasData, Role, User } from "./types";
 import { buildSeedData } from "./seed";
+import { uid } from "./services";
 
 const DATA_KEY = "ras-data-v1";
 const SESSION_KEY = "ras-session-v1";
 
 export type ModuleId =
-  | "overview" | "orders" | "tables" | "menu" | "billing" | "kitchen"
-  | "inventory" | "purchase-orders" | "suppliers" | "invoices"
-  | "accounts" | "reports" | "users" | "settings";
+  | "overview"
+  | "orders"
+  | "tables"
+  | "menu"
+  | "billing"
+  | "kitchen"
+  | "inventory"
+  | "purchase-orders"
+  | "suppliers"
+  | "invoices"
+  | "accounts"
+  | "reports"
+  | "users"
+  | "settings";
 
 export const ALL_MODULES: ModuleId[] = [
-  "overview", "orders", "tables", "menu", "billing", "kitchen", "inventory",
-  "purchase-orders", "suppliers", "invoices", "accounts", "reports", "users", "settings",
+  "overview",
+  "orders",
+  "tables",
+  "menu",
+  "billing",
+  "kitchen",
+  "inventory",
+  "purchase-orders",
+  "suppliers",
+  "invoices",
+  "accounts",
+  "reports",
+  "users",
+  "settings",
 ];
 
 export const ROLE_MODULES: Record<Role, ModuleId[]> = {
   manager: [...ALL_MODULES],
   clerk: ["overview", "orders", "tables", "billing"],
-  kitchen: ["kitchen"],
+  kitchen: ["kitchen", "inventory"],
   stock: ["inventory", "purchase-orders", "suppliers", "invoices"],
 };
 
@@ -105,15 +137,30 @@ export function RasProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     (userId: string, password: string) => {
-      const user = (data?.users ?? []).find((u) => u.userId.toLowerCase() === userId.trim().toLowerCase());
+      const user = (data?.users ?? []).find(
+        (u) => u.userId.toLowerCase() === userId.trim().toLowerCase(),
+      );
       if (!user) return { ok: false, error: "Unknown user ID" };
       if (!user.active) return { ok: false, error: "This account is deactivated" };
       if (user.password !== password) return { ok: false, error: "Incorrect password" };
       localStorage.setItem(SESSION_KEY, user.userId);
       setSessionUserId(user.userId);
+      setData((prev) => {
+        if (!prev) return prev;
+        const next = structuredClone(prev);
+        next.auditLog.unshift({
+          id: uid("audit"),
+          at: new Date().toISOString(),
+          actor: user.id,
+          action: "user_login",
+          details: user.userId,
+        });
+        persist(next);
+        return next;
+      });
       return { ok: true };
     },
-    [data],
+    [data, persist],
   );
 
   const loginAsRole = useCallback(
@@ -122,9 +169,22 @@ export function RasProvider({ children }: { children: ReactNode }) {
       if (user) {
         localStorage.setItem(SESSION_KEY, user.userId);
         setSessionUserId(user.userId);
+        setData((prev) => {
+          if (!prev) return prev;
+          const next = structuredClone(prev);
+          next.auditLog.unshift({
+            id: uid("audit"),
+            at: new Date().toISOString(),
+            actor: user.id,
+            action: "demo_role_login",
+            details: user.userId,
+          });
+          persist(next);
+          return next;
+        });
       }
     },
-    [data],
+    [data, persist],
   );
 
   const logout = useCallback(() => {
@@ -139,7 +199,10 @@ export function RasProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const session = useMemo(
-    () => (data && sessionUserId ? data.users.find((u) => u.userId === sessionUserId) ?? null : null),
+    () =>
+      data && sessionUserId
+        ? (data.users.find((u) => u.userId === sessionUserId && u.active) ?? null)
+        : null,
     [data, sessionUserId],
   );
 

@@ -41,7 +41,8 @@ export interface RecipeLine {
   quantity: number;
 }
 
-export type MenuCategory = "Starters" | "Main Course" | "Breads" | "Rice" | "Desserts" | "Beverages";
+export type MenuCategory =
+  "Starters" | "Main Course" | "Breads" | "Rice" | "Desserts" | "Beverages";
 
 export interface MenuItem {
   id: string;
@@ -265,6 +266,16 @@ export interface CashReconciliation {
   at: string;
 }
 
+export interface Report {
+  id: string;
+  category: "sales" | "expenses" | "inventory" | "purchases" | "cash";
+  title: string;
+  from?: string;
+  to?: string;
+  generatedAt: string;
+  rows: Record<string, string | number>[];
+}
+
 export type NotificationType =
   | "low_stock"
   | "purchase_order"
@@ -315,6 +326,7 @@ export interface Counters {
 
 export interface RasData {
   version: number;
+  lastStockCheck?: string;
   users: User[];
   suppliers: Supplier[];
   ingredients: Ingredient[];

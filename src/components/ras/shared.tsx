@@ -16,7 +16,9 @@ export function PageHeader({
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        {description ? <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p> : null}
+        {description ? (
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
+        ) : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
@@ -74,7 +76,9 @@ export function KpiCard({
           <Icon className="h-4 w-4" />
         </div>
       </div>
-      <p className="mt-2 font-display text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+      <p className="mt-2 font-display text-2xl font-semibold tracking-tight text-foreground">
+        {value}
+      </p>
       {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
     </div>
   );
@@ -124,7 +128,14 @@ export function LoadingScreen({ label = "Loading workspace…" }: { label?: stri
 
 export function UtensilsMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className ?? "h-5 w-5"}>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      className={className ?? "h-5 w-5"}
+    >
       <path d="M7 3v7a2 2 0 0 0 4 0V3" />
       <path d="M9 12v9" />
       <path d="M17 3c-1.5 1-2.5 3-2.5 5.5S15 12 16 12v9" />

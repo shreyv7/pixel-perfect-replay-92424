@@ -22,7 +22,11 @@ export interface BillTotals {
   grandTotal: number;
 }
 
-export function computeBillTotals(subtotal: number, discountPct: number, gstPct: number): BillTotals {
+export function computeBillTotals(
+  subtotal: number,
+  discountPct: number,
+  gstPct: number,
+): BillTotals {
   const safeDiscount = Math.max(0, Math.min(100, discountPct || 0));
   const discountAmount = round2((subtotal * safeDiscount) / 100);
   const taxable = round2(subtotal - discountAmount);
@@ -70,7 +74,7 @@ export function averageDailyConsumption(
 ): number {
   const cutoff = new Date(today + "T00:00:00");
   cutoff.setDate(cutoff.getDate() - (windowDays - 1));
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   const total = logs
     .filter((l) => l.ingredientId === ingredientId && l.date >= cutoffStr && l.date <= today)
     .reduce((s, l) => s + l.quantity, 0);
@@ -89,7 +93,12 @@ export function computeThreshold(
   settings: Settings,
   today: string,
 ): ThresholdResult {
-  const avgDaily = averageDailyConsumption(logs, ingredientId, settings.consumptionWindowDays, today);
+  const avgDaily = averageDailyConsumption(
+    logs,
+    ingredientId,
+    settings.consumptionWindowDays,
+    today,
+  );
   return { avgDaily, threshold: round2(avgDaily * settings.coverageDays) };
 }
 
@@ -104,22 +113,23 @@ export interface ReorderLine {
   estimatedCost: number;
 }
 
-export function hasOpenPO(data: RasData, ingredientId: string, date: string): boolean {
+export function hasSameDayPO(data: RasData, ingredientId: string, date: string): boolean {
   return data.purchaseOrders.some(
-    (po) =>
-      po.date === date &&
-      po.status !== "completed" &&
-      po.status !== "cancelled" &&
-      po.lines.some((l) => l.ingredientId === ingredientId),
+    (po) => po.date === date && po.lines.some((l) => l.ingredientId === ingredientId),
   );
 }
 
 export function computeReorderPlan(data: RasData, today: string): ReorderLine[] {
   const lines: ReorderLine[] = [];
   for (const ing of data.ingredients) {
-    const { avgDaily, threshold } = computeThreshold(data.consumptionLogs, ing.id, data.settings, today);
+    const { avgDaily, threshold } = computeThreshold(
+      data.consumptionLogs,
+      ing.id,
+      data.settings,
+      today,
+    );
     if (ing.currentStock >= threshold) continue;
-    if (hasOpenPO(data, ing.id, today)) continue;
+    if (hasSameDayPO(data, ing.id, today)) continue;
     const requiredQty = round2(threshold - ing.currentStock);
     const pack = ing.packSize > 0 ? ing.packSize : 1;
     const orderQty = round2(Math.ceil(requiredQty / pack) * pack);
@@ -168,16 +178,25 @@ export function cashBalance(data: RasData): number {
 }
 
 export function totalReceipts(data: RasData): number {
-  return round2(data.cashBook.filter((e) => e.type === "receipt").reduce((s, e) => s + e.amount, 0));
+  return round2(
+    data.cashBook.filter((e) => e.type === "receipt").reduce((s, e) => s + e.amount, 0),
+  );
 }
 
 export function totalExpenses(data: RasData): number {
-  return round2(data.cashBook.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0));
+  return round2(
+    data.cashBook.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0),
+  );
 }
 
 // ---------- IDs ----------
 
-export function nextCode(data: RasData, key: "order" | "bill" | "purchaseOrder" | "invoice" | "cheque", prefix: string, pad = 4): {
+export function nextCode(
+  data: RasData,
+  key: "order" | "bill" | "purchaseOrder" | "invoice" | "cheque",
+  prefix: string,
+  pad = 4,
+): {
   code: string;
   next: number;
 } {
